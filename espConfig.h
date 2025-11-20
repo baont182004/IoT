@@ -388,14 +388,27 @@ public:
     blinker.attach_ms(100, ledSignalControl);
     attachInterrupt(btSetup,btSetupChange,CHANGE);
 
-    // Vẫn khởi tạo EEPROM và đọc config (để log cho vui thôi)
+    // Khởi tạo EEPROM + đọc config đã lưu
     configInit();
 
-    // Luôn ép về cấu hình mặc định và yêu cầu config lại
-    configStore = configDefault;          // xoá cấu hình cũ trong RAM
-    espState::set(MODE_WAIT_CONFIG);      // luôn vào mode cấu hình (AP)
+    // Nếu đã từng lưu config (flags == 0x01) → tự động kết nối WiFi/Blynk
+    // Nếu chưa có cấu hình → vào chế độ AP config
+    if (configStore.flags == 0x01) {
+      dprintln("Found stored config, connecting to WiFi...");
+      espState::set(MODE_CONNECTING_NET);
+    } else {
+      dprintln("No config found, entering CONFIG mode.");
+      espState::set(MODE_WAIT_CONFIG);
+    }
   }
 
+    // // Vẫn khởi tạo EEPROM và đọc config (để log cho vui thôi)
+    // configInit();
+
+    // // Luôn ép về cấu hình mặc định và yêu cầu config lại
+    // configStore = configDefault;          // xoá cấu hình cũ trong RAM
+    // espState::set(MODE_WAIT_CONFIG);      // luôn vào mode cấu hình (AP)
+  
   void run(){
     switch (espState::get()) {
       case MODE_WAIT_CONFIG:
