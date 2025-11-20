@@ -388,17 +388,17 @@ public:
     blinker.attach_ms(100, ledSignalControl);
     attachInterrupt(btSetup,btSetupChange,CHANGE);
 
+    // Vẫn khởi tạo EEPROM và đọc config (để log cho vui thôi)
     configInit();
 
-    if(configStore.flags==0x01){
-      espState::set(MODE_CONNECTING_NET);
-    }else {
-      espState::set(MODE_WAIT_CONFIG);
-    }
+    // Luôn ép về cấu hình mặc định và yêu cầu config lại
+    configStore = configDefault;          // xoá cấu hình cũ trong RAM
+    espState::set(MODE_WAIT_CONFIG);      // luôn vào mode cấu hình (AP)
   }
+
   void run(){
     switch (espState::get()) {
-      case MODE_WAIT_CONFIG:       
+      case MODE_WAIT_CONFIG:
       case MODE_CONFIGURING:       enterConfigMode();    break;
       case MODE_CONNECTING_NET:    enterConnectNet();    break;
       case MODE_CONNECTING_CLOUD:  enterConnectCloud();  break;

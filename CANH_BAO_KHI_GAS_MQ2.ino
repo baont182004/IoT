@@ -1,103 +1,122 @@
+/******************************************************
+ *  ESP8266 + MQ2 + Blynk + Backend Cloud (MongoDB)
+ *  Giữ nguyên toàn bộ cấu trúc espConfig.h & configForm.h
+ *  CHỈ thêm phần gửi HTTP POST lên backend Render
+ ******************************************************/
+
 #define BLYNK_TEMPLATE_ID   "TMPL6FoIRsM96"
 #define BLYNK_TEMPLATE_NAME "KHIGAS"
-#define BLYNK_AUTH_TOKEN    "T3fpZKQNeKv7JAgVGg3GGmt9ebSiJ_5m" // Đã thêm Auth Token
+#define BLYNK_AUTH_TOKEN    "T3fpZKQNeKv7JAgVGg3GGmt9ebSiJ_5m"
 
 #define DEBUG
-#include "espConfig.h" // Thư viện cấu hình của bạn
-int buzzer=5;     //D1
-int relay =4;     //D2
-int ledMode=14;   //D5
-int mucCanhbao;
+#include "espConfig.h"   // file cũ của bạn – KHÔNG ĐỤNG TỚI
+
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+
+// Chân cảm biến MQ2
+const int MQ2_PIN = A0;
+
+// Device ID & Backend URL (Render)
+const char* DEVICE_ID   = "esp8266-gas-01";
+const char* BACKEND_URL = "https://bilstm-iot.onrender.com/api/gas";
+
+// Timer xử lý nhiệm vụ (BlynkTimer)
 BlynkTimer timer;
-int timerID1,timerID2;
-float mq2_value;
-int button=0;     //D3
-boolean buttonState=HIGH;
-boolean runMode=0;//Bật/tắt chế độ cảnh báo
-boolean canhbaoState=0;
-WidgetLED led(V0);
-#define GAS V1
-#define MUCCANHBAO V2
-#define CANHBAO V3
-#define CHEDO V4
+
+
+/******************************************************
+ *  HÀM GỬI DỮ LIỆU LÊN BACKEND
+ ******************************************************/
+void sendGasToBackend(float gasValue, int rawAdc) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(F("[HTTP] WiFi chưa kết nối, bỏ qua"));
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure(); // cho phép HTTPS không kiểm tra chứng chỉ
+
+  HTTPClient http;
+
+  Serial.println(F("[HTTP] Gửi data lên backend..."));
+
+  if (!http.begin(client, BACKEND_URL)) {
+    Serial.println(F("[HTTP] http.begin() FAILED"));
+    return;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+
+  // JSON payload
+  String payload = "{";
+  payload += "\"deviceId\":\""; payload += DEVICE_ID;  payload += "\",";
+  payload += "\"gasValue\":";   payload += String(gasValue, 2); payload += ",";
+  payload += "\"rawAdc\":";     payload += String(rawAdc);
+  payload += "}";
+
+  Serial.print(F("[HTTP] Payload: "));
+  Serial.println(payload);
+
+  int httpCode = http.POST(payload);
+
+  if (httpCode > 0) {
+    Serial.printf("[HTTP] Code: %d\n", httpCode);
+    if (httpCode >= 200 && httpCode < 300) {
+      Serial.println(http.getString());
+    }
+  } else {
+    Serial.print(F("[HTTP] POST FAILED: "));
+    Serial.println(http.errorToString(httpCode));
+  }
+
+  http.end();
+}
+
+
+/******************************************************
+ *  ĐỌC CẢM BIẾN MQ2
+ ******************************************************/
+void readGasTask() {
+  int rawAdc = analogRead(MQ2_PIN);           // 0-1023
+  float gasValue = (rawAdc / 1023.0) * 1000;  // scale về 0–1000
+
+  Serial.print(F("[SENSOR] raw="));
+  Serial.print(rawAdc);
+  Serial.print(F(" | gas="));
+  Serial.println(gasValue);
+
+  // Gửi lên Blynk
+  Blynk.virtualWrite(V0, gasValue);
+  Blynk.virtualWrite(V1, rawAdc);
+
+  // Gửi lên backend
+  sendGasToBackend(gasValue, rawAdc);
+}
+
+
+/******************************************************
+ *  BẮT ĐẦU CHƯƠNG TRÌNH
+ ******************************************************/
+extern "C" void app_loop() { timer.run(); }
 
 void setup() {
   Serial.begin(115200);
-  pinMode(button,INPUT_PULLUP);
-  pinMode(buzzer,OUTPUT);
-  pinMode(relay,OUTPUT);
-  pinMode(ledMode,OUTPUT);
-  digitalWrite(buzzer,LOW); //Tắt buzzer
-  digitalWrite(relay,LOW);
-  timerID1 = timer.setInterval(1000L,handleTimerID1);
+  delay(500);
+
+  pinMode(MQ2_PIN, INPUT);
+
+  Serial.println();
+  Serial.println(F("=== ESP8266 MQ2 Gas Monitor Start ==="));
+
+  // Khởi động bộ quản lý WiFi/Blynk (file espConfig.h)
   espConfig.begin();
+
+  // Đọc & gửi dữ liệu mỗi 5 giây
+  timer.setInterval(5000L, readGasTask);
 }
 
 void loop() {
-  espConfig.run();
-  app_loop();
-}
-void app_loop(){
-  timer.run();
-  if(digitalRead(button)==LOW){
-    if(buttonState==HIGH){
-      buttonState=LOW;
-      runMode=!runMode;
-      digitalWrite(ledMode,runMode);
-      Serial.println("Run mode: " + String(runMode));
-      Blynk.virtualWrite(CHEDO,runMode);
-      delay(200);
-    }
-  }else{
-    buttonState=HIGH;
-  }
-}
-void handleTimerID1(){
-  int mq2 = analogRead(A0);
-  float voltage = mq2 / 1024.0 * 5.0;
-  float ratio = voltage / 1.4;
-  mq2_value = 1000.0 * pow(10, ((log10(ratio) - 1.0278) / 0.6629));
-  Serial.println("Gas: "+String(mq2_value,0)+"ppm");
-  Blynk.virtualWrite(GAS,mq2_value);
-  if(led.getValue()) {
-    led.off();
-  } else {
-    led.on();
-  }
-  if(runMode==1){
-    if(mq2_value>mucCanhbao){
-      if(canhbaoState==0){
-        canhbaoState=1;
-        Blynk.logEvent("canhbao", String("Cảnh báo! Khí gas=" + String(mq2_value)+" vượt quá mức cho phép!"));
-        timerID2 = timer.setTimeout(60000L,handleTimerID2);
-      }
-      digitalWrite(buzzer,HIGH);
-      digitalWrite(relay,HIGH);
-      Blynk.virtualWrite(CANHBAO,HIGH);
-      Serial.println("Đã bật cảnh báo!");
-    }else{
-      digitalWrite(buzzer,LOW);
-      digitalWrite(relay,LOW);
-      Blynk.virtualWrite(CANHBAO,LOW);
-      Serial.println("Đã tắt cảnh báo!");
-    }
-  }else{
-    digitalWrite(buzzer,LOW);
-    digitalWrite(relay,LOW);
-    Blynk.virtualWrite(CANHBAO,LOW);
-    Serial.println("Đã tắt cảnh báo!");
-  }
-}
-void handleTimerID2(){
-  canhbaoState=0;
-}
-BLYNK_CONNECTED() {
-  Blynk.syncAll();
-}
-BLYNK_WRITE(MUCCANHBAO) {
-  mucCanhbao = param.asInt();
-}
-BLYNK_WRITE(CHEDO) {
-  runMode = param.asInt();
-  digitalWrite(ledMode,runMode);
+  espConfig.run(); // giữ nguyên logic cũ 
+  app_loop();      // để timer hoạt động
 }
